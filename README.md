@@ -15,9 +15,9 @@
 ## Установка: одна команда
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/respectr38-wq/forma-web/main/bootstrap.sh | sudo bash -s -- respectr38-wq/forma-web
+curl -fsSL https://raw.githubusercontent.com/respectr38-wq/forma-web/main/bootstrap.sh -o /tmp/forma-bootstrap.sh && sudo bash /tmp/forma-bootstrap.sh respectr38-wq/forma-web
 ```
-Если вы вошли на сервер **сразу как root** и команда `sudo` отсутствует, замените `sudo bash` в строке установки на `bash`.
+**Почему без конвейера `curl | bash`:** при запуске интерактивных вопросов внутри SSH/sudo на некоторых серверах дочерний Bash получает сигнал остановки (`T+` в `ps`). Загрузка скрипта в файл и отдельный запуск сохраняют обычный ввод терминала. При попытке интерактивного запуска через конвейер загрузчик теперь выводит подсказку вместо зависания.\n\nЕсли вы вошли на сервер **сразу как root** и команда `sudo` отсутствует, замените `sudo bash` в строке установки на `bash`.
 
 Если на VPS нет `curl`, сначала выполните:
 
