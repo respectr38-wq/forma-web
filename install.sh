@@ -16,16 +16,17 @@ FORMA WEB / Self-SNI: установка настоящего сайта на с
   sudo bash install.sh
   sudo bash install.sh --domain site.example.com --email me@example.com
   sudo bash install.sh --domain site.example.com --email me@example.com --contact-email contact@example.com
-  sudo bash install.sh --target-port 9443 --firewall allow
+  sudo bash install.sh --target-port 9443 --firewall allow --firewall-443 allow
 
 Флаги: --target-port PORT (по умолчанию выбрать свободный автоматически)
-       --firewall ask|allow|skip (спросить, разрешить TCP/80 или не менять firewall)
+       --firewall ask|allow|skip (доступ к TCP/80 для Let's Encrypt)
+       --firewall-443 ask|allow|skip (отдельное разрешение TCP/443 для REALITY)
 После установки программа покажет настройки для существующего REALITY inbound.
 Xray и 3x-ui НЕ изменяются автоматически.
 USAGE
 }
 
-DOMAIN='' EMAIL='' CONTACT_EMAIL='' CONTACT_ASK=1 TARGET_PORT='' FIREWALL_MODE='ask'
+DOMAIN='' EMAIL='' CONTACT_EMAIL='' CONTACT_ASK=1 TARGET_PORT='' FIREWALL_MODE='ask' FIREWALL_443_MODE='ask'
 while (($#)); do
   case "$1" in
     --domain) (($#>=2)) || die 'Пропущен домен после --domain'; DOMAIN="$2"; shift 2;;
@@ -33,12 +34,14 @@ while (($#)); do
     --contact-email) (($#>=2)) || die 'Пропущен email после --contact-email'; CONTACT_EMAIL="$2"; CONTACT_ASK=0; shift 2;;
     --target-port) (($#>=2)) || die 'Пропущен порт после --target-port'; TARGET_PORT="$2"; shift 2;;
     --firewall) (($#>=2)) || die 'Пропущен режим после --firewall'; FIREWALL_MODE="$2"; shift 2;;
+    --firewall-443) (($#>=2)) || die 'Пропущен режим после --firewall-443'; FIREWALL_443_MODE="$2"; shift 2;;
     --help|-h) help_text; exit 0;;
     *) die "Неизвестный аргумент: $1";;
   esac
 done
 
 [[ "$FIREWALL_MODE" == 'ask' || "$FIREWALL_MODE" == 'allow' || "$FIREWALL_MODE" == 'skip' ]] || die 'Для --firewall доступны ask, allow или skip.'
+[[ "$FIREWALL_443_MODE" == 'ask' || "$FIREWALL_443_MODE" == 'allow' || "$FIREWALL_443_MODE" == 'skip' ]] || die 'Для --firewall-443 доступны ask, allow или skip.'
 [[ -z "$TARGET_PORT" || ( "$TARGET_PORT" =~ ^[0-9]+$ && ${#TARGET_PORT} -le 5 ) ]] || die 'Для --target-port требуется число 1024–65535.'
 if [[ -n "$TARGET_PORT" ]]; then
   ((10#$TARGET_PORT >= 1024 && 10#$TARGET_PORT <= 65535)) || die 'Для --target-port требуется число 1024–65535.'
@@ -64,6 +67,9 @@ ask() {
 }
 
 printf '\n%bFORMA WEB — мастер установки сайта для Self-SNI / Self-Steal%b\n' "$BLUE" "$RESET"
+info 'План: домен и email -> HTTP/80 и сертификат -> внутренний HTTPS -> инструкция по Xray/REALITY'
+warn 'Публичный https://ДОМЕН заработает только после настройки VLESS + REALITY на TCP/443 в 3x-ui.'
+warn 'Для сайта Nginx слушает только 127.0.0.1:ВНУТРЕННИЙ_ПОРТ. Не открывай этот внутренний порт наружу.'
 [[ -n "$DOMAIN" ]] || ask DOMAIN 'Домен сайта (например, site.example.com): '
 DOMAIN="$(printf '%s' "$DOMAIN" | tr '[:upper:]' '[:lower:]')"
 [[ ${#DOMAIN} -le 253 && "$DOMAIN" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]] || die 'Введи корректный домен без https://, пробелов и путей.'
@@ -370,6 +376,79 @@ if systemctl is-active --quiet "$CERTBOT_TIMER"; then
 else
   warn "Таймер $CERTBOT_TIMER не активен — проверь расписание Certbot вручную."
 fi
+# TCP/443 is served by Xray, not Nginx. Check both listeners and firewall.
+# Do not touch SSH or existing Xray inbound. A 443 rule is created only with consent.
+info 'Финальная проверка: Xray REALITY и публичный TCP/443'
+if ss -H -ltn '( sport = :443 )' | grep -q .; then
+  pass 'На TCP/443 уже есть слушающая служба (проверь в 3x-ui, что это нужный Xray inbound).'
+else
+  warn 'Порт TCP/443 пока никто не слушает. Создай или настрой VLESS + REALITY inbound на порту 443 в 3x-ui.'
+  warn 'Обычный HTTPS-сайт может не открываться, пока Xray не запущен на 443.'
+fi
+
+# A missing explicit allow is not proof of a block (UFW can have broader rules).
+ufw_tcp_explicit_allow() {
+  local port="$1"
+  LC_ALL=C ufw status 2>/dev/null |
+    awk -v p="$port" '($1==p"/tcp" || $1==p) && $2=="ALLOW" {yes=1} END{exit !yes}'
+}
+choose_https_access() {
+  case "$FIREWALL_443_MODE" in
+    allow) return 0;;
+    skip) return 1;;
+    ask)
+      local reply443
+      ask reply443 'Добавить в активный firewall разрешение TCP/443 для HTTPS/REALITY? [д/Н]: '
+      case "${reply443,,}" in д|да|y|yes) return 0;; *) return 1;; esac
+      ;;
+  esac
+}
+if command -v ufw >/dev/null && LC_ALL=C ufw status 2>/dev/null | grep -q '^Status: active'; then
+  info 'UFW активен: проверяем TCP/443 и доступ SSH'
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    SSH_PORT="${SSH_CONNECTION##* }"
+    if [[ "$SSH_PORT" =~ ^[0-9]+$ ]]; then
+      if ! ufw_tcp_explicit_allow "$SSH_PORT"; then
+        warn "Для текущего порта SSH ($SSH_PORT/tcp) нет отдельного разрешения в UFW."
+        warn "НЕ закрывай SSH-сессию, пока не убедишься в доступе с нового подключения."
+        warn "Если доступ должен быть открыт всем: ufw allow ${SSH_PORT}/tcp (лучше ограничить по своему IP)."
+      fi
+    fi
+  else
+    warn 'Порт SSH определить не удалось. Проверь SSH-доступ в UFW до выхода из терминала.'
+  fi
+  if ufw_tcp_explicit_allow 443; then
+    pass 'В UFW найдено явное разрешение TCP/443.'
+  else
+    warn 'В UFW нет отдельного ALLOW для TCP/443 — сайт может не открываться извне.'
+    if choose_https_access; then
+      ufw allow 443/tcp comment 'FORMA WEB Xray REALITY HTTPS'
+      pass 'В UFW добавлено разрешение TCP/443 (остальные правила не изменены).'
+    else
+      warn 'Правило TCP/443 не добавлено. Если HTTPS недоступен: ufw allow 443/tcp'
+    fi
+  fi
+elif command -v firewall-cmd >/dev/null && systemctl is-active --quiet firewalld 2>/dev/null; then
+  info 'Проверяем TCP/443 в активном firewalld'
+  if firewall-cmd --quiet --query-service=https || firewall-cmd --quiet --query-port=443/tcp; then
+    pass 'В firewalld явно разрешён HTTPS/TCP 443.'
+  elif choose_https_access; then
+    firewall-cmd --add-service=https
+    firewall-cmd --permanent --add-service=https
+    pass 'В firewalld добавлено разрешение HTTPS/TCP 443.'
+  else
+    warn 'TCP/443 не добавлен в firewalld; если сайт недоступен, разреши HTTPS/TCP 443.'
+  fi
+  warn 'Перед закрытием SSH обязательно проверь, что входящий SSH разрешён в firewalld.'
+else
+  warn 'Активный UFW/firewalld не найден. Проверь разрешение TCP/443 в панели VPS-хостинга и иных firewall.'
+fi
+warn 'Даже при разрешённом UFW TCP/443 может быть закрыт firewall провайдера VPS.'
+warn "После настройки REALITY открой в браузере https://$DOMAIN"
+warn "Если сайт не открылся: ss -ltnp | grep ':443' ; ufw status ; curl -I http://$DOMAIN"
+warn "Диагностика: curl -I --resolve ${DOMAIN}:443:127.0.0.1 https://${DOMAIN}/"
+warn 'Для VPN-клиента адрес сервера — публичный домен/IP, а НЕ 127.0.0.1.'
+
 cat <<EOF_DONE
 
 ===============================================================
@@ -382,17 +461,26 @@ cat <<EOF_DONE
   SSL:       автоматическое продление через $CERTBOT_TIMER
   Проверка:  sudo certbot renew --cert-name $DOMAIN --dry-run
 
-  Теперь открой 3x-ui -> Inbounds -> свой VLESS + REALITY:
+  Важно: установка сайта НЕ включает публичный HTTPS автоматически!
+  ШАГ 1. 3x-ui -> Inbounds -> VLESS + REALITY:
+    Port:               443/TCP (RAW)
     Target / Dest:      127.0.0.1:$TARGET_PORT
     SNI / Server Names: $DOMAIN
     Xver:               0
+    Flow для Vision:    xtls-rprx-vision
 
-  НЕ меняй REALITY-ключи, UUID, Short ID и Flow.
-  Обнови SNI в клиентах после сохранения inbound.
-  Только после этого проверь в браузере: https://$DOMAIN
+  ШАГ 2. Разреши входящие 443/TCP в firewall VPS и у хостинг-провайдера.
+         Если UFW активен и нет разрешения: ufw allow 443/tcp
+  ШАГ 3. Сохрани inbound; убедись, что Xray слушает :443.
+         Проверка: ss -ltnp | grep ':443'
+  ШАГ 4. Открой https://$DOMAIN с другого устройства/сети.
+
+  НЕ меняй существующие REALITY-ключи, UUID и Short ID.
+  Обнови SNI в VPN-клиентах после сохранения inbound.
+  Если сайт работает на HTTP, но не на HTTPS, проверь шаги 1-3.
 
   ВАЖНО: сохраняй резервную копию конфигурации 3x-ui.
-  Xray, 3x-ui и SSH не изменялись. TCP/80 в firewall мог быть открыт с согласия пользователя.
+  Xray, 3x-ui и SSH не изменялись. Правила TCP/80 и TCP/443 могли добавиться только с согласия.
   HTTPS-сайт не скрывает объём VPN-трафика.
 ===============================================================
 EOF_DONE
