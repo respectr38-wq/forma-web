@@ -28,4 +28,10 @@ tar -xzf "$TMP/source.tar.gz" --strip-components=1 -C "$TMP/source"
   echo 'В репозитории не найдены install.sh и site/index.html.' >&2
   exit 1
 }
-bash "$TMP/source/install.sh" "$@"
+# The bootstrap arrives via curl|bash, so stdin points to a pipe.
+# Give the interactive installer the user's terminal explicitly when available.
+if [[ -r /dev/tty ]]; then
+  bash "$TMP/source/install.sh" "$@" </dev/tty
+else
+  bash "$TMP/source/install.sh" "$@"
+fi
