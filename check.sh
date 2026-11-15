@@ -51,6 +51,40 @@ if command -v curl >/dev/null; then
   fi
   echo 'Внешний HTTPS через порт 443 проверяй только после настройки REALITY.'
 fi
+printf '\nДиагностика публичного HTTPS / REALITY (без изменения сервера):\n'
+if command -v ss >/dev/null; then
+  if ss -H -ltn '( sport = :443 )' | grep -q .; then
+    echo '[OK] TCP/443 прослушивается. Проверь, что это Xray REALITY.'
+  else
+    echo '[!] TCP/443 никто не слушает. Создай/запусти VLESS + REALITY inbound с портом 443.'
+  fi
+fi
+if command -v ufw >/dev/null && LC_ALL=C ufw status 2>/dev/null | grep -q '^Status: active'; then
+  if LC_ALL=C ufw status | awk '($1=="443/tcp" || $1=="443") && $2=="ALLOW" {ok=1} END{exit !ok}'; then
+    echo '[OK] UFW: найдено явное разрешение TCP/443.'
+  else
+    echo '[!] UFW: нет отдельного ALLOW для TCP/443; возможна блокировка внешнего HTTPS.'
+    echo '    При необходимости, только после проверки правил: sudo ufw allow 443/tcp'
+  fi
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    ssh_port="${SSH_CONNECTION##* }"
+    if [[ "$ssh_port" =~ ^[0-9]+$ ]] && ! LC_ALL=C ufw status | awk -v p="$ssh_port" '($1==p"/tcp" || $1==p) && $2=="ALLOW" {ok=1} END{exit !ok}'; then
+      echo "[!] Для текущего SSH-порта $ssh_port нет отдельного ALLOW. Не закрывай SSH до проверки доступа."
+    fi
+  fi
+else
+  echo '[!] UFW не активен или не установлен; проверь firewall VPS-провайдера.'
+fi
+if command -v curl >/dev/null; then
+  local443="$(curl --noproxy '*' -fsS --max-time 10 --resolve "${DOMAIN}:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://${DOMAIN}/" 2>/dev/null || true)"
+  if [[ "$local443" == '200' ]]; then
+    echo '[OK] HTTPS через локальный TCP/443: HTTP 200.'
+  else
+    echo "[!] HTTPS через Xray/TCP443 не подтверждён: ${local443:-нет ответа}."
+    echo '    Сначала настрой REALITY Target и SNI в 3x-ui.'
+  fi
+fi
+echo 'Важно: проверка с самого VPS не доказывает доступность из внешней сети.'
 if command -v systemctl >/dev/null; then
   if systemctl is-active --quiet certbot.timer; then
     echo '[OK] Автоматическое продление: certbot.timer активен.'
