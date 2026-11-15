@@ -14,6 +14,15 @@ REPO="${1:-}"
   exit 1
 }
 shift
+# Interactive prompting under 'curl | sudo bash' may leave the child Bash
+# stopped by SIGTTIN/SIGTTOU on some SSH/sudo/pty configurations.
+# Fail clearly instead of appearing to hang. Download then run from a file.
+if [[ ! -t 0 ]]; then
+  printf '%s\n' 'ОШИБКА: запуск через curl | bash не поддерживается для интерактивной установки.' >&2
+  printf '%s\n' 'Запусти одной строкой:' >&2
+  printf '%s\n' 'curl -fsSL https://raw.githubusercontent.com/respectr38-wq/forma-web/main/bootstrap.sh -o /tmp/forma-bootstrap.sh && sudo bash /tmp/forma-bootstrap.sh respectr38-wq/forma-web' >&2
+  exit 2
+fi
 command -v curl >/dev/null || { echo 'Сначала установи curl: sudo apt update && sudo apt install -y curl' >&2; exit 1; }
 command -v tar >/dev/null || { echo 'Не найден tar.' >&2; exit 1; }
 TMP="$(mktemp -d /tmp/forma-web.XXXXXXXX)"
