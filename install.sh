@@ -53,23 +53,25 @@ command -v systemctl >/dev/null || die 'Нужна система с systemd.'
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 [[ -f "$HERE/site/index.html" && -f "$HERE/site/assets/style.css" ]] || die 'Файлы сайта отсутствуют рядом с install.sh.'
 
+# Ask directly in the current shell. Command substitution ($(ask ...))
+# starts another Bash process and can interfere with terminal input in curl|bash.
 ask() {
-  local prompt="$1" output
+  local __target="$1" __prompt="$2" __value
   [[ -r /dev/tty ]] || die 'Нет терминала для ввода. Передай --domain и --email.'
-  printf '%s' "$prompt" > /dev/tty
-  IFS= read -r output < /dev/tty || die 'Не удалось прочитать ввод.'
-  printf '%s' "$output"
+  printf '%s' "$__prompt" > /dev/tty
+  IFS= read -r __value < /dev/tty || die 'Не удалось прочитать ввод из терминала.'
+  printf -v "$__target" '%s' "$__value"
 }
 
 printf '\n%bFORMA WEB — мастер установки сайта для Self-SNI / Self-Steal%b\n' "$BLUE" "$RESET"
-[[ -n "$DOMAIN" ]] || DOMAIN="$(ask 'Домен сайта (например, site.example.com): ')"
+[[ -n "$DOMAIN" ]] || ask DOMAIN 'Домен сайта (например, site.example.com): '
 DOMAIN="$(printf '%s' "$DOMAIN" | tr '[:upper:]' '[:lower:]')"
 [[ ${#DOMAIN} -le 253 && "$DOMAIN" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]] || die 'Введи корректный домен без https://, пробелов и путей.'
 [[ "$DOMAIN" != *.example && "$DOMAIN" != *.localhost && "$DOMAIN" != *.invalid ]] || die 'Нужен настоящий зарегистрированный домен.'
-[[ -n "$EMAIL" ]] || EMAIL="$(ask "Email для уведомлений Let's Encrypt: ")"
+[[ -n "$EMAIL" ]] || ask EMAIL "Email для уведомлений Let's Encrypt: "
 [[ "$EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] || die 'Некорректный email.'
 if ((CONTACT_ASK)); then
-  reply="$(ask 'Показывать этот email на сайте для связи? [д/Н]: ')"
+  ask reply 'Показывать этот email на сайте для связи? [д/Н]: '
   case "${reply,,}" in д|да|y|yes) CONTACT_EMAIL="$EMAIL";; *) CONTACT_EMAIL='';; esac
 fi
 if [[ -n "$CONTACT_EMAIL" && ! "$CONTACT_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
@@ -191,7 +193,7 @@ choose_http_access() {
     skip) return 1;;
     ask)
       local answer
-      answer="$(ask 'Разрешить входящий TCP/80 для проверки сертификата (не затрагивая другие порты)? [Д/н]: ')"
+      ask answer 'Разрешить входящий TCP/80 для проверки сертификата (не затрагивая другие порты)? [Д/н]: '
       case "${answer,,}" in ''|д|да|y|yes) return 0;; *) return 1;; esac
       ;;
   esac
