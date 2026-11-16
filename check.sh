@@ -20,6 +20,17 @@ if [[ -r "$CONF" ]]; then
   [[ "$detected" =~ ^[0-9]{4,5}$ ]] && TARGET_PORT="$detected"
 fi
 printf '\nПроверка FORMA WEB: %s (внутренний HTTPS-порт %s)\n' "$DOMAIN" "$TARGET_PORT"
+if [[ -r /etc/os-release ]]; then
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  echo "Система: ${PRETTY_NAME:-${ID:-Linux}}"
+fi
+if command -v nginx >/dev/null; then
+  nginx -v 2>&1
+fi
+if command -v certbot >/dev/null; then
+  certbot --version 2>&1
+fi
 printf '%s\n' 'Проверка только читает конфигурацию, ничего не перезапускает.'
 echo '=== DNS и HTTP ==='
 if command -v getent >/dev/null; then
