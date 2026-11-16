@@ -54,10 +54,12 @@ source /etc/os-release
 case "${ID:-}" in ubuntu|debian) ;; *) die 'Поддерживаются только Ubuntu и Debian.';; esac
 command -v systemctl >/dev/null || die 'Нужна система с systemd.'
 pass "Обнаружена система: ${PRETTY_NAME:-${ID:-Linux}}"
-if [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "24.04" ]]; then
-  pass 'Режим совместимости с Ubuntu 24.04 LTS: Nginx 1.24.x и Certbot из apt.'
+if [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "26.04" ]]; then
+  pass 'Основная система: Ubuntu Server 26.04 LTS (Resolute), Nginx 1.28.x и Certbot 4.x из apt.'
+elif [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "24.04" ]]; then
+  pass 'Совместимый режим: Ubuntu 24.04 LTS, Nginx 1.24.x и Certbot из apt.'
 elif [[ "${ID:-}" == "ubuntu" ]]; then
-  warn "На Ubuntu ${VERSION_ID:-неизвестная} установка выполняется по общей схеме. Основная проверка — Ubuntu 24.04 LTS."
+  warn "Ubuntu ${VERSION_ID:-неизвестная}: установка по общей схеме без отдельной проверки. Основная система — Ubuntu 26.04 LTS."
 fi
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 [[ -f "$HERE/site/index.html" && -f "$HERE/site/assets/style.css" ]] || die 'Файлы сайта отсутствуют рядом с install.sh.'
@@ -139,10 +141,15 @@ if ((${#DNS_IPS[@]}!=1)) || [[ "${DNS_IPS[0]:-}" != "$PUBLIC_IP" ]]; then
 fi
 pass "DNS A: $DOMAIN -> $PUBLIC_IP"
 
-info 'Устанавливаем Nginx и Certbot через apt (совместимо с Ubuntu 24.04)'
+info 'Устанавливаем Nginx и Certbot из официальных репозиториев apt'
 apt-get update -qq
+# Certbot is packaged in Ubuntu's "universe" component, including 26.04 LTS.
+# Never change apt sources automatically: they may be managed by the VPS provider.
+if [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "26.04" ]] && ! apt-cache show certbot >/dev/null 2>&1; then
+  die 'На Ubuntu 26.04 пакет certbot не найден. Проверь доступность репозитория universe (sudo add-apt-repository universe; sudo apt update) и повтори установку.'
+fi
 if ! DEBIAN_FRONTEND=noninteractive apt-get install -y nginx certbot ca-certificates; then
-  die 'Не удалось установить nginx/certbot. Для Ubuntu 24.04 проверь репозитории apt (включая universe), интернет и ошибки apt выше.'
+  die 'Не удалось установить nginx/certbot. Проверь интернет, apt и репозиторий universe (для Ubuntu 26.04/24.04).'
 fi
 command -v nginx >/dev/null || die 'Nginx не установлен.'
 command -v certbot >/dev/null || die 'Certbot не установлен.'
@@ -272,13 +279,13 @@ certbot certonly --non-interactive --agree-tos --email "$EMAIL" \
 info 'Настраиваем локальный HTTPS-сервер для REALITY'
 NGX_VER="$(nginx -v 2>&1 | sed -n 's#.*nginx/\([0-9][0-9.]*\).*#\1#p')"
 if [[ -n "$NGX_VER" ]] && dpkg --compare-versions "$NGX_VER" ge 1.25.1; then
-  info "Nginx $NGX_VER: новый синтаксис HTTP/2 (http2 on;)."
+  info "Nginx $NGX_VER: HTTP/2 через http2 on; (Ubuntu 26.04 / Nginx 1.28.x)."
   HTTP2_LISTEN="listen 127.0.0.1:${TARGET_PORT} ssl;"
   HTTP2_ON='http2 on;'
 else
-  # Ubuntu 24.04 from apt installs Nginx 1.24.x:
-  # 'http2 on;' is unavailable there, only 'listen ... ssl http2;' works.
-  info "Nginx ${NGX_VER:-неизвестная версия}: синтаксис HTTP/2 для Ubuntu 24.04 (listen ... ssl http2)."
+  # Ubuntu 24.04 from apt ships Nginx 1.24.x. The 'http2 on;' directive
+  # was introduced in Nginx 1.25.1, so older versions need listen ... http2.
+  info "Nginx ${NGX_VER:-неизвестная версия}: синтаксис HTTP/2 для версий до 1.25.1 (listen ... ssl http2)."
   HTTP2_LISTEN="listen 127.0.0.1:${TARGET_PORT} ssl http2;"
   HTTP2_ON=''
 fi
@@ -303,7 +310,7 @@ systemctl reload nginx
 
 info 'Проверяем TLS 1.3, HTTP/2 и правильный сертификат'
 # curl --resolve connects to loopback, while verifying the real domain in SNI and certificate.
-RESPONSE="$(curl -fsS --tlsv1.3 --http2 --max-time 20 \
+RESPONSE="$(curl --noproxy '*' -fsS --tlsv1.3 --http2 --max-time 20 \
   --resolve "${DOMAIN}:${TARGET_PORT}:127.0.0.1" -o /dev/null \
   -w '%{http_code} %{http_version}' "https://${DOMAIN}:${TARGET_PORT}/")"
 [[ "$RESPONSE" == '200 2' ]] || die "Проверка HTTPS не прошла: ${RESPONSE:-нет ответа}."
