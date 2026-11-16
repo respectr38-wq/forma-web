@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FORMA WEB: simple, non-destructive Self-SNI website setup for 3x-ui / REALITY.
+# HORIZON ROOMS: non-destructive Self-SNI hotel catalog setup for 3x-ui / REALITY.
 # Never edits Xray, 3x-ui, SSH, panel ports or other sites. May open TCP/80 in an active firewall with consent.
 set -Eeuo pipefail
 
@@ -10,7 +10,7 @@ warn() { printf '%b%s%b\n' "$YELLOW" "[!] $*" "$RESET" >&2; }
 die() { printf '%b%s%b\n' "$RED" "[ОШИБКА] $*" "$RESET" >&2; exit 1; }
 help_text() {
 cat <<'USAGE'
-FORMA WEB / Self-SNI: установка настоящего сайта на свободный локальный HTTPS-порт
+HORIZON ROOMS / Self-SNI: установка сайта поиска отелей на свободный локальный HTTPS-порт
 
 Использование:
   sudo bash install.sh
@@ -74,7 +74,7 @@ ask() {
   printf -v "$__target" '%s' "$__value"
 }
 
-printf '\n%bFORMA WEB — мастер установки сайта для Self-SNI / Self-Steal%b\n' "$BLUE" "$RESET"
+printf '\n%bHORIZON ROOMS — мастер установки сайта для Self-SNI / Self-Steal%b\n' "$BLUE" "$RESET"
 info 'План: домен и email -> HTTP/80 и сертификат -> внутренний HTTPS -> инструкция по Xray/REALITY'
 warn 'Публичный https://ДОМЕН заработает только после настройки VLESS + REALITY на TCP/443 в 3x-ui.'
 warn 'Для сайта Nginx слушает только 127.0.0.1:ВНУТРЕННИЙ_ПОРТ. Не открывай этот внутренний порт наружу.'
@@ -182,13 +182,13 @@ on_exit() {
 }
 trap on_exit EXIT
 
-info 'Копируем готовый сайт FORMA WEB'
+info 'Копируем готовый сайт Horizon Rooms'
 install -d -m 0755 "$WEBROOT"
 OWN_SITE=1
 cp -a "$HERE/site/." "$WEBROOT/"
 cat > "$WEBROOT/assets/site-config.js" <<EOF_CONF
 // Email виден посетителям, если задан; на сайте нет вымышленных контактов.
-window.FORMA_CONFIG = {
+window.HORIZON_CONFIG = {
   contactEmail: "${CONTACT_EMAIL}",
   portfolioUrl: ""
 };
@@ -233,7 +233,7 @@ if command -v ufw >/dev/null && LC_ALL=C ufw status 2>/dev/null | grep -q '^Stat
   if LC_ALL=C ufw status | awk '$1 ~ /^80(\/tcp)?$/ && $2=="ALLOW" && $0 !~ /\(v6\)/ {ok=1} END {exit !ok}'; then
     pass 'В UFW уже есть разрешающее правило TCP/80.'
   elif choose_http_access; then
-    ufw allow 80/tcp comment 'FORMA WEB ACME HTTP-01'
+    ufw allow 80/tcp comment 'HORIZON ROOMS ACME HTTP-01'
     pass 'UFW: открыт только TCP/80; настройки SSH, VPN и панели не изменены.'
   else
     if [[ "$FIREWALL_MODE" == 'skip' ]]; then
@@ -450,7 +450,7 @@ if command -v ufw >/dev/null && LC_ALL=C ufw status 2>/dev/null | grep -q '^Stat
   else
     warn 'В UFW нет отдельного ALLOW для TCP/443 — сайт может не открываться извне.'
     if choose_https_access; then
-      ufw allow 443/tcp comment 'FORMA WEB Xray REALITY HTTPS'
+      ufw allow 443/tcp comment 'HORIZON ROOMS Xray REALITY HTTPS'
       pass 'В UFW добавлено разрешение TCP/443 (остальные правила не изменены).'
     else
       warn 'Правило TCP/443 не добавлено. Если HTTPS недоступен: ufw allow 443/tcp'
@@ -495,7 +495,7 @@ fi
 cat <<EOF_DONE
 
 ===============================================================
-  ГОТОВО: FORMA WEB УСТАНОВЛЕН
+  ГОТОВО: HORIZON ROOMS УСТАНОВЛЕН
 ===============================================================
   Сайт:      $DOMAIN
   IPv4:      $PUBLIC_IP
