@@ -189,8 +189,8 @@ cp -a "$HERE/site/." "$WEBROOT/"
 cat > "$WEBROOT/assets/site-config.js" <<EOF_CONF
 // Email виден посетителям, если задан; на сайте нет вымышленных контактов.
 window.HORIZON_CONFIG = {
-  contactEmail: "${CONTACT_EMAIL}",
-  portfolioUrl: ""
+  contactEmail: "${CONTACT_EMAIL}"
+  // Только контактный email для демосайта
 };
 EOF_CONF
 chmod -R a+rX "$WEBROOT"

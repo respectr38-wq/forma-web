@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # FORMA WEB CHECK MANAGED
-# Read-only diagnostic for FORMA WEB Self-Steal website. Never changes a service.
+# Read-only diagnostic for Horizon Rooms hotel-search site. Never changes a service.
 set -Eeuo pipefail
 
 DOMAIN="${1:-}"
@@ -19,7 +19,7 @@ if [[ -r "$CONF" ]]; then
   detected="$(sed -n 's/^# FORMA SELFSTEAL TARGET_PORT: //p' "$CONF" | head -n 1)"
   [[ "$detected" =~ ^[0-9]{4,5}$ ]] && TARGET_PORT="$detected"
 fi
-printf '\nПроверка FORMA WEB: %s (внутренний HTTPS-порт %s)\n' "$DOMAIN" "$TARGET_PORT"
+printf '\nПроверка Horizon Rooms: %s (внутренний HTTPS-порт %s)\n' "$DOMAIN" "$TARGET_PORT"
 if [[ -r /etc/os-release ]]; then
   # shellcheck disable=SC1091
   . /etc/os-release
