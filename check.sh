@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# FORMA WEB CHECK MANAGED
 # Read-only diagnostic for FORMA WEB Self-Steal website. Never changes a service.
 set -Eeuo pipefail
 
@@ -19,10 +20,49 @@ if [[ -r "$CONF" ]]; then
   [[ "$detected" =~ ^[0-9]{4,5}$ ]] && TARGET_PORT="$detected"
 fi
 printf '\nПроверка FORMA WEB: %s (внутренний HTTPS-порт %s)\n' "$DOMAIN" "$TARGET_PORT"
+printf '%s\n' 'Проверка только читает конфигурацию, ничего не перезапускает.'
+echo '=== DNS и HTTP ==='
+if command -v getent >/dev/null; then
+  if command -v timeout >/dev/null; then
+    dns_ipv4="$(timeout 8 getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1}' | sort -u | paste -sd ',' - || true)"
+  else
+    dns_ipv4="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1}' | sort -u | paste -sd ',' - || true)"
+  fi
+  if [[ -n "$dns_ipv4" ]]; then
+    echo "[OK] DNS IPv4: $dns_ipv4"
+  else
+    echo '[!] DNS IPv4: домен не разрешается. Проверь DuckDNS/A-запись.'
+  fi
+fi
+if command -v curl >/dev/null; then
+  public_ip="$(curl --noproxy '*' -4fsS --connect-timeout 5 --max-time 8 https://api.ipify.org 2>/dev/null || true)"
+  if [[ "$public_ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+    echo "IPv4 исходящего соединения VPS: $public_ip"
+    if [[ -n "${dns_ipv4:-}" ]] && [[ ",$dns_ipv4," != *",$public_ip,"* ]]; then
+      echo '[!] DNS домена не совпадает с исходящим IPv4 VPS. Уточни публичный входящий IP у провайдера.'
+    fi
+  fi
+  http_status="$(curl --noproxy '*' -4sS --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' "http://$DOMAIN/" 2>/dev/null || true)"
+  if [[ "$http_status" == '200' ]]; then
+    echo '[OK] HTTP/80: сайт отвечает 200 с данного VPS.'
+  else
+    echo "[!] HTTP/80: нет ответа 200 (${http_status:-нет ответа}). Проверь DNS, Nginx, port 80 и firewall."
+  fi
+fi
 if [[ -f "$CONF" ]]; then
   echo '[OK] Конфигурация Nginx существует.'
 else
   echo '[!] Конфигурация Nginx не найдена.'
+fi
+if command -v ss >/dev/null; then
+  if ss -H -ltn "( sport = :$TARGET_PORT )" | grep -q .; then
+    echo "[OK] Внутренний порт $TARGET_PORT прослушивается."
+    ss -H -ltnp "( sport = :$TARGET_PORT )" || true
+  else
+    echo "[!] Внутренний порт $TARGET_PORT не слушается. Проверь конфигурацию Nginx."
+  fi
+  echo '    Порты 8443/9443/10443/11443/18443 могут быть заняты разными службами.'
+  echo '    Для поиска: ss -ltnp | grep -E ":(8443|9443|10443|11443|18443)\\b"'
 fi
 if command -v nginx >/dev/null && nginx -t >/dev/null 2>&1; then
   echo '[OK] Синтаксис конфигурации Nginx.'
