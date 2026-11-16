@@ -53,6 +53,12 @@ fi
 source /etc/os-release
 case "${ID:-}" in ubuntu|debian) ;; *) die 'Поддерживаются только Ubuntu и Debian.';; esac
 command -v systemctl >/dev/null || die 'Нужна система с systemd.'
+pass "Обнаружена система: ${PRETTY_NAME:-${ID:-Linux}}"
+if [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "24.04" ]]; then
+  pass 'Режим совместимости с Ubuntu 24.04 LTS: Nginx 1.24.x и Certbot из apt.'
+elif [[ "${ID:-}" == "ubuntu" ]]; then
+  warn "На Ubuntu ${VERSION_ID:-неизвестная} установка выполняется по общей схеме. Основная проверка — Ubuntu 24.04 LTS."
+fi
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 [[ -f "$HERE/site/index.html" && -f "$HERE/site/assets/style.css" ]] || die 'Файлы сайта отсутствуют рядом с install.sh.'
 
@@ -87,8 +93,8 @@ fi
 WEBROOT="/var/www/forma-selfsteal/$DOMAIN"
 CONF="/etc/nginx/conf.d/forma-selfsteal-${DOMAIN}.conf"
 HOOK='/etc/letsencrypt/renewal-hooks/deploy/80-forma-selfsteal-nginx-reload.sh'
-[[ ! -e "$CONF" ]] || die "Конфигурация $CONF уже существует. Установка остановлена во избежание перезаписи."
-[[ ! -e "$WEBROOT" ]] || die "Папка $WEBROOT уже существует. Установка остановлена во избежание перезаписи."
+[[ ! -e "$CONF" ]] || die "Сайт $DOMAIN уже имеет конфигурацию $CONF. Не запускай установку повторно — проверь через: sudo forma-web-check $DOMAIN"
+[[ ! -e "$WEBROOT" ]] || die "Папка $WEBROOT уже существует. Не перезаписываем файлы. Проверь через: sudo forma-web-check $DOMAIN"
 
 info 'Проверяем занятые порты'
 command -v ss >/dev/null || die 'Нужна утилита ss. Установи пакет iproute2 и повтори.'
@@ -97,7 +103,13 @@ if [[ -n "$TARGET_PORT" ]]; then
   port_busy "$TARGET_PORT" && die "Локальный HTTPS-порт $TARGET_PORT уже занят. Выбери другой --target-port."
 else
   for candidate in 8443 9443 10443 11443 18443; do
-    if ! port_busy "$candidate"; then TARGET_PORT="$candidate"; break; fi
+    if port_busy "$candidate"; then
+      warn "Внутренний порт $candidate уже занят. Ищем следующий свободный порт."
+      ss -H -ltnp "( sport = :$candidate )" >&2 || true
+    else
+      TARGET_PORT="$candidate"
+      break
+    fi
   done
   [[ -n "$TARGET_PORT" ]] || die 'Все внутренние HTTPS-порты заняты: 8443, 9443, 10443, 11443, 18443.'
 fi
@@ -119,18 +131,23 @@ if ! command -v curl >/dev/null; then
 fi
 PUBLIC_IP="$(curl -4fsS --connect-timeout 7 --max-time 15 https://api.ipify.org || true)"
 [[ "$PUBLIC_IP" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || die 'Не удалось определить публичный IPv4 сервера.'
-mapfile -t DNS_IPS < <(getent ahostsv4 "$DOMAIN" | awk '{print $1}' | sort -u)
+# DuckDNS and some VPS resolvers may stall; do not appear frozen forever.
+mapfile -t DNS_IPS < <(timeout 12 getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1}' | sort -u)
 if ((${#DNS_IPS[@]}!=1)) || [[ "${DNS_IPS[0]:-}" != "$PUBLIC_IP" ]]; then
   printf 'IPv4 сервера: %s\nA-запись домена: %s\n' "$PUBLIC_IP" "${DNS_IPS[*]:-(не найдена)}" >&2
-  die "Настрой DNS-запись A: ${DOMAIN} -> ${PUBLIC_IP} (DNS-only, без CDN) и повтори установку."
+  die "Настрой DNS A: ${DOMAIN} -> ${PUBLIC_IP}. Для DuckDNS проверь IPv4 в панели. Дождись обновления DNS и повтори установку."
 fi
 pass "DNS A: $DOMAIN -> $PUBLIC_IP"
 
-info 'Устанавливаем Nginx и Certbot'
+info 'Устанавливаем Nginx и Certbot через apt (совместимо с Ubuntu 24.04)'
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y nginx certbot ca-certificates
+if ! DEBIAN_FRONTEND=noninteractive apt-get install -y nginx certbot ca-certificates; then
+  die 'Не удалось установить nginx/certbot. Для Ubuntu 24.04 проверь репозитории apt (включая universe), интернет и ошибки apt выше.'
+fi
 command -v nginx >/dev/null || die 'Nginx не установлен.'
 command -v certbot >/dev/null || die 'Certbot не установлен.'
+pass "Nginx: $(nginx -v 2>&1)"
+pass "Certbot: $(certbot --version 2>&1)"
 
 # Reject existing configuration for this exact hostname, including sites-enabled.
 if { grep -RFl --include='*.conf' --include='default' "server_name $DOMAIN" /etc/nginx/sites-enabled /etc/nginx/conf.d 2>/dev/null || true; } | grep -q .; then
@@ -255,9 +272,13 @@ certbot certonly --non-interactive --agree-tos --email "$EMAIL" \
 info 'Настраиваем локальный HTTPS-сервер для REALITY'
 NGX_VER="$(nginx -v 2>&1 | sed -n 's#.*nginx/\([0-9][0-9.]*\).*#\1#p')"
 if [[ -n "$NGX_VER" ]] && dpkg --compare-versions "$NGX_VER" ge 1.25.1; then
+  info "Nginx $NGX_VER: новый синтаксис HTTP/2 (http2 on;)."
   HTTP2_LISTEN="listen 127.0.0.1:${TARGET_PORT} ssl;"
   HTTP2_ON='http2 on;'
 else
+  # Ubuntu 24.04 from apt installs Nginx 1.24.x:
+  # 'http2 on;' is unavailable there, only 'listen ... ssl http2;' works.
+  info "Nginx ${NGX_VER:-неизвестная версия}: синтаксис HTTP/2 для Ubuntu 24.04 (listen ... ssl http2)."
   HTTP2_LISTEN="listen 127.0.0.1:${TARGET_PORT} ssl http2;"
   HTTP2_ON=''
 fi
@@ -473,6 +494,8 @@ cat <<EOF_DONE
   IPv4:      $PUBLIC_IP
   Каталог:   $WEBROOT
   HTTPS:     127.0.0.1:$TARGET_PORT (доступен только из VPS)
+  Версия ОС: ${PRETTY_NAME:-${ID:-Linux}}
+  Nginx:     ${NGX_VER:-неизвестно}
   SSL:       автоматическое продление через $CERTBOT_TIMER
   Проверка:  sudo certbot renew --cert-name $DOMAIN --dry-run
   Диагностика: sudo forma-web-check $DOMAIN (если установлен)
