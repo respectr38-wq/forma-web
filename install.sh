@@ -449,6 +449,21 @@ warn "Если сайт не открылся: ss -ltnp | grep ':443' ; ufw stat
 warn "Диагностика: curl -I --resolve ${DOMAIN}:443:127.0.0.1 https://${DOMAIN}/"
 warn 'Для VPN-клиента адрес сервера — публичный домен/IP, а НЕ 127.0.0.1.'
 
+# Keep the read-only diagnostic available after bootstrap removes its temp directory.
+# Never overwrite an unrelated script.
+if [[ -f "$HERE/check.sh" ]]; then
+  CHECK_BIN='/usr/local/bin/forma-web-check'
+  if [[ ! -e "$CHECK_BIN" ]] || grep -q 'FORMA WEB CHECK MANAGED' "$CHECK_BIN" 2>/dev/null; then
+    if install -m 0755 "$HERE/check.sh" "$CHECK_BIN"; then
+      pass "Диагностика установлена: sudo forma-web-check $DOMAIN"
+    else
+      warn "Не удалось установить диагностику в $CHECK_BIN. Скачай check.sh из GitHub."
+    fi
+  else
+    warn "Файл $CHECK_BIN принадлежит другой программе; не перезаписываем."
+  fi
+fi
+
 cat <<EOF_DONE
 
 ===============================================================
@@ -460,6 +475,7 @@ cat <<EOF_DONE
   HTTPS:     127.0.0.1:$TARGET_PORT (доступен только из VPS)
   SSL:       автоматическое продление через $CERTBOT_TIMER
   Проверка:  sudo certbot renew --cert-name $DOMAIN --dry-run
+  Диагностика: sudo forma-web-check $DOMAIN (если установлен)
 
   Важно: установка сайта НЕ включает публичный HTTPS автоматически!
   ШАГ 1. 3x-ui -> Inbounds -> VLESS + REALITY:
